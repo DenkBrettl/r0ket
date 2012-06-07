@@ -15,9 +15,10 @@
 /* function prototypes */
 void gotoISP(void);
 void gotoMSC(void);
+void eeprom_compare(void);
 void eeprom_read(void);
 void eeprom_write(void);
-int myatoi(const char *);
+uint32_t myatoi(const char *);
 unsigned long int hextoul(char *);
 // hackety hack :-)
 char *strcpy(char *restrict dst, const char *restrict src);
@@ -76,6 +77,10 @@ void set_eeprom_16bit_addressing(void)
   lcdPrintln("EEPROM type");
   lcdPrintln("set to 16 bit");
   lcdPrintln("addressing.");
+  lcdPrintln("");
+  lcdPrintln("BEWARE");
+  lcdPrintln("This code path");
+  lcdPrintln("is UNTESTED!");
   lcdRefresh(); 
 
   do{
@@ -148,7 +153,8 @@ static const struct MENU mainmenu = {"Mainmenu", {
   { "Image file",  &set_imgfile_name},
   { "Read  EEPROM",  &eeprom_read},
   { "Write EEPROM",  &eeprom_write},
-  { "---",   NULL},
+  { "Cmpre EEPROM",  &eeprom_compare},
+/*  { "---",   NULL}, */
   { "Invoke ISP", &gotoISP},
   { "Invoke MSC", &gotoMSC},
   { NULL,NULL}
@@ -173,6 +179,7 @@ static const struct MENU mainmenu = {"Mainmenu", {
 int32_t eeprom_write_byte(uint8_t byte, uint16_t address) {
   uint32_t count = 0;
   uint32_t ret;
+  uint8_t verify_byte;
   uint16_t effective_base_addr = eeprom_cfg.base_addr;
 
   /* The EEPROM may be divided into blocks. If it is, the block is 
@@ -181,7 +188,7 @@ int32_t eeprom_write_byte(uint8_t byte, uint16_t address) {
     address -= eeprom_cfg.blocksize;
     effective_base_addr += 2;
   }
-  
+
   I2CMasterBuffer[0] = LOW_BYTE(effective_base_addr);
   I2CMasterBuffer[1] = LOW_BYTE(address);
   if(eeprom_cfg.addr_bits == EEPROM_8BIT_ADDR) {
@@ -207,9 +214,16 @@ int32_t eeprom_write_byte(uint8_t byte, uint16_t address) {
   I2CReadLength = 0;
   while(i2cEngine() != I2CSTATE_ACK) {
     count++;
-    if(count > 10001) return -1; /* FIXME: this is just some guess for a maximum wait count */
+    delayms(1);
+    if(count > 100) return -1; /* FIXME: configurable timeout? */
   }
-  delayms(10);
+  
+  ret = eeprom_read_byte(&verify_byte, address);
+  if( (verify_byte != byte) || (ret == -1) ) {
+    lcdPrintln("Re-read failed");
+    return -1;
+  }
+ 
   return count;
 }
 
@@ -255,7 +269,7 @@ int8_t eeprom_read_byte(uint8_t *byte, uint16_t address) {
 
   ret = i2cEngine();
   if(ret != I2CSTATE_ACK) return -1;
-  return eeprom_read_byte_current(effective_base_addr, byte);
+  return eeprom_read_byte_current(LOW_BYTE(effective_base_addr), byte);
 }
 
 /* 
@@ -276,10 +290,10 @@ int8_t eeprom_read_byte(uint8_t *byte, uint16_t address) {
  *  -1 -- error
  * A more detailed error can be fetched from I2CSlaveState.
  */
-int8_t eeprom_read_byte_current(uint8_t addr, uint8_t *byte) {
+int8_t eeprom_read_byte_current(uint8_t base_addr, uint8_t *byte) {
   /* in I2C the read address is always the write (= base) address + 1 
    * (basically: the last bit is high instead of low) */
-  I2CMasterBuffer[0] = eeprom_cfg.base_addr;
+  I2CMasterBuffer[0] = base_addr + 1;
   I2CWriteLength = 1;
   I2CReadLength = 1;
   if(i2cEngine() != I2CSTATE_ACK) return -1;
@@ -294,10 +308,12 @@ void main_i2c_eeprom(void) {
   /* set some sane defaults */
   eeprom_cfg.base_addr = 0xA0;   /* 24LCXX */
   eeprom_cfg.addr_bits = EEPROM_8BIT_ADDR;
-/*  eeprom_cfg.size = 128;
-  eeprom_cfg.blocksize = 128;*/
-  eeprom_cfg.size = 1024;
+  eeprom_cfg.size = 128;
+  eeprom_cfg.blocksize = 128;
+/*  eeprom_cfg.size = 1024;
   eeprom_cfg.blocksize = 256;
+  eeprom_cfg.size = 256;
+  eeprom_cfg.blocksize = 256;  */
 
   while (1) {
     lcdDisplay();
@@ -355,6 +371,7 @@ void eeprom_write(void) {
   FIL file;
   UINT f_readbytes;
   int32_t res;
+  int32_t sum_ms = 0;
 
   status = STAT_WRITE;
   gpioSetValue(READ_LED, 0);
@@ -410,13 +427,19 @@ void eeprom_write(void) {
       } while ((getInput()) != BTN_ENTER);
       return;
     }
+    sum_ms += res;  /* res = time the write took in ms */
   }
 
   f_close(&file);
 
-  lcdPrint("Count: ");
+  lcdPrint("Wrote: ");
   lcdPrintln(IntToStr(write_cnt, 5, 0));
+  lcdPrintln("bytes.");
   lcdPrintln("Write complete!");
+  lcdPrintln("Avg write time");
+  lcdPrintln("per byte");
+  lcdPrint(IntToStr(sum_ms / eeprom_cfg.size, 5, 0));
+  lcdPrintln("ms");
   lcdRefresh(); 
 
   status = STAT_IDLE;
@@ -427,13 +450,14 @@ void eeprom_write(void) {
 
 }
 
+
 void eeprom_read(void) {
   uint read_cnt;
   uint8_t read_byte_buf;
   FIL file;
   UINT f_writebytes;
   int32_t res;
-  
+
   status = STAT_READ;
   gpioSetValue(WRITE_LED, 0);
 
@@ -508,6 +532,117 @@ void eeprom_read(void) {
 }
 
 
+void eeprom_compare(void) {
+  uint read_cnt;
+  uint8_t read_byte_buf, f_read_byte_buf;
+  FIL file;
+  UINT f_readbytes;
+  int32_t res;
+  char iterations_input[6];
+  int32_t iterations, i;
+
+  lcdClear();
+
+  PutUnsignedInt(iterations_input, '0', 5, 10);
+  input("How many times?", (char *)&iterations_input, 48, 57, 6);
+  getInputWaitRelease();
+	iterations = myatoi(iterations_input);
+
+  status = STAT_READ;
+  gpioSetValue(WRITE_LED, 0);
+
+  i2cInit(I2CMASTER); // Init I2C
+
+  for(i = 0; i < iterations; i++) {
+
+    res = f_open(&file, image_file_name, FA_OPEN_EXISTING|FA_READ);
+    if(res){
+      lcdPrintln("ERROR:");
+      lcdPrintln("Can't open");
+      lcdPrintln("image file");
+      lcdPrintln(image_file_name);
+      lcdRefresh();
+      status = STAT_IDLE;
+      gpioSetValue(WRITE_LED, 0);
+      do{
+      } while ((getInput()) != BTN_ENTER);
+      return;
+    };
+
+    lcdClear();
+    lcdPrintln("Comparing...");
+    lcdPrint(IntToStr(i + 1, 5, 0));
+    lcdPrint("/");
+    lcdPrintln(IntToStr(iterations, 5, 0));
+    lcdRefresh();
+  
+    for(read_cnt = 0; read_cnt < eeprom_cfg.size; read_cnt++) {
+      /* the var "read_cnt" is also the address here */
+      res = eeprom_read_byte(&read_byte_buf, read_cnt);
+      if(res == -1) {
+        lcdPrintln("Read error");
+        lcdPrintln("at byte");
+        lcdPrintln(IntToStr(read_cnt, 5, 0));
+        lcdRefresh();
+        f_close(&file);
+        status = STAT_IDLE;
+        gpioSetValue(WRITE_LED, 0);
+        do{
+        } while ((getInput()) != BTN_ENTER);
+        return;
+      }
+  
+      res = f_read(&file, (char *)&f_read_byte_buf, 1, &f_readbytes);
+      if(res || (f_readbytes != 1) ){
+        lcdPrintln("ERROR:");
+        lcdPrintln("File read");
+        lcdPrintln("failed");
+        lcdPrintln("at byte");
+        lcdPrintln(IntToStr(read_cnt, 5, 0));
+        lcdRefresh();
+        f_close(&file);
+        status = STAT_IDLE;
+        gpioSetValue(WRITE_LED, 0);
+        do{
+        } while ((getInput()) != BTN_ENTER);
+        return;
+      }
+
+      /* actual comparision */
+      if(read_byte_buf != f_read_byte_buf) {
+        lcdPrintln("ERROR:");
+        lcdPrintln("Compare");
+        lcdPrintln("error");
+        lcdPrintln("at byte");
+        lcdPrintln(IntToStr(read_cnt, 5, 0));
+        lcdPrintln("iteration");
+        lcdPrintln(IntToStr(i + 1, 5, 0));
+        lcdRefresh();
+        f_close(&file);
+        status = STAT_IDLE;
+        gpioSetValue(WRITE_LED, 0);
+        do{
+        } while ((getInput()) != BTN_ENTER);
+        return;        
+      }
+    }
+  
+    f_close(&file);
+  }
+  
+  lcdPrintln("Compare");
+  lcdPrintln("successful!");
+  lcdRefresh(); 
+
+  status = STAT_IDLE;
+  gpioSetValue(READ_LED, 0);
+
+  do{
+  } while ((getInput()) != BTN_ENTER);
+  
+  return;
+}
+
 
 /*
  * The table below is used to convert from ASCII digits to a
@@ -552,7 +687,7 @@ uint32_t hextoul(char *string)
 }
 
 
-int myatoi(const char *string)
+uint32_t myatoi(const char *string)
 {
 	uint32_t i;
 	i=0;
