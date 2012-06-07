@@ -177,10 +177,9 @@ static const struct MENU mainmenu = {"Mainmenu", {
  * A more detailed error can be fetched from I2CSlaveState.
  */
 int32_t eeprom_write_byte(uint8_t byte, uint16_t address) {
-  uint32_t count = 0;
-  uint32_t ret;
-  uint8_t verify_byte;
+  uint8_t verify_byte, count = 0;
   uint16_t effective_base_addr = eeprom_cfg.base_addr;
+  int8_t ret;
 
   /* The EEPROM may be divided into blocks. If it is, the block is 
    * addressed inside the base address. */
@@ -202,8 +201,7 @@ int32_t eeprom_write_byte(uint8_t byte, uint16_t address) {
   }
   else return -1;
   I2CReadLength = 0;
-  ret = i2cEngine();
-  if(ret != I2CSTATE_ACK) return -1;
+  if(i2cEngine() != I2CSTATE_ACK) return -1;
   
   /* at this point, the EEPROM will begin to write the byte. This internal write cycle
    * takes some time. As long as it does, the EEPROM will not send an ACK on the bus on
@@ -221,6 +219,12 @@ int32_t eeprom_write_byte(uint8_t byte, uint16_t address) {
   ret = eeprom_read_byte(&verify_byte, address);
   if( (verify_byte != byte) || (ret == -1) ) {
     lcdPrintln("Re-read failed");
+    lcdPrint("ret = ");
+    lcdPrintln(IntToStr(ret, 5, 0));
+    lcdPrint("vrfy_byte = ");
+    lcdPrintln(IntToStr(verify_byte, 5, 0));
+    lcdPrint("byte = ");
+    lcdPrintln(IntToStr(byte, 5, 0));
     return -1;
   }
  
@@ -245,7 +249,6 @@ int32_t eeprom_write_byte(uint8_t byte, uint16_t address) {
  * A more detailed error can be fetched from I2CSlaveState.
  */
 int8_t eeprom_read_byte(uint8_t *byte, uint16_t address) {
-  uint32_t ret;
   uint16_t effective_base_addr = eeprom_cfg.base_addr;
 
   /* The EEPROM may be divided into blocks. If it is, the block is 
@@ -267,8 +270,8 @@ int8_t eeprom_read_byte(uint8_t *byte, uint16_t address) {
   else return -1;
   I2CReadLength = 0;
 
-  ret = i2cEngine();
-  if(ret != I2CSTATE_ACK) return -1;
+  if(i2cEngine() != I2CSTATE_ACK) return -1;
+
   return eeprom_read_byte_current(LOW_BYTE(effective_base_addr), byte);
 }
 
