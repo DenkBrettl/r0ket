@@ -179,23 +179,24 @@ static const struct MENU mainmenu = {"Mainmenu", {
 int32_t eeprom_write_byte(uint8_t byte, uint16_t address) {
   uint8_t verify_byte, count = 0;
   uint16_t effective_base_addr = eeprom_cfg.base_addr;
+  uint16_t effective_address = address;
   int8_t ret;
 
   /* The EEPROM may be divided into blocks. If it is, the block is 
    * addressed inside the base address. */
-  while(address >= eeprom_cfg.blocksize) {
-    address -= eeprom_cfg.blocksize;
+  while(effective_address >= eeprom_cfg.blocksize) {
+    effective_address -= eeprom_cfg.blocksize;
     effective_base_addr += 2;
   }
 
   I2CMasterBuffer[0] = LOW_BYTE(effective_base_addr);
-  I2CMasterBuffer[1] = LOW_BYTE(address);
+  I2CMasterBuffer[1] = LOW_BYTE(effective_address);
   if(eeprom_cfg.addr_bits == EEPROM_8BIT_ADDR) {
     I2CMasterBuffer[2] = byte;
     I2CWriteLength = 3;
   }
   else if(eeprom_cfg.addr_bits == EEPROM_16BIT_ADDR) {
-    I2CMasterBuffer[2] = HIGH_BYTE(address);
+    I2CMasterBuffer[2] = HIGH_BYTE(effective_address);
     I2CMasterBuffer[3] = byte;
     I2CWriteLength = 4;
   }
@@ -225,6 +226,7 @@ int32_t eeprom_write_byte(uint8_t byte, uint16_t address) {
     lcdPrintln(IntToStr(verify_byte, 5, 0));
     lcdPrint("byte = ");
     lcdPrintln(IntToStr(byte, 5, 0));
+    lcdPrintln("EEPROM broken?");
     return -1;
   }
  
@@ -250,21 +252,22 @@ int32_t eeprom_write_byte(uint8_t byte, uint16_t address) {
  */
 int8_t eeprom_read_byte(uint8_t *byte, uint16_t address) {
   uint16_t effective_base_addr = eeprom_cfg.base_addr;
+  uint16_t effective_address = address;
 
   /* The EEPROM may be divided into blocks. If it is, the block is 
    * addressed inside the base address. */
-  while(address >= eeprom_cfg.blocksize) {
-    address -= eeprom_cfg.blocksize;
+  while(effective_address >= eeprom_cfg.blocksize) {
+    effective_address -= eeprom_cfg.blocksize;
     effective_base_addr += 2;
   }
-  
+
   I2CMasterBuffer[0] = LOW_BYTE(effective_base_addr);
-  I2CMasterBuffer[1] = LOW_BYTE(address);
+  I2CMasterBuffer[1] = LOW_BYTE(effective_address);
   if(eeprom_cfg.addr_bits == EEPROM_8BIT_ADDR) {
     I2CWriteLength = 2;
   }
   else if(eeprom_cfg.addr_bits == EEPROM_16BIT_ADDR) {
-    I2CMasterBuffer[2] = HIGH_BYTE(address);
+    I2CMasterBuffer[2] = HIGH_BYTE(effective_address);
     I2CWriteLength = 3;
   }
   else return -1;
@@ -311,12 +314,9 @@ void main_i2c_eeprom(void) {
   /* set some sane defaults */
   eeprom_cfg.base_addr = 0xA0;   /* 24LCXX */
   eeprom_cfg.addr_bits = EEPROM_8BIT_ADDR;
-  eeprom_cfg.size = 128;
-  eeprom_cfg.blocksize = 128;
-/*  eeprom_cfg.size = 1024;
+  /* This works for an 24LC08B */
+  eeprom_cfg.size = 1024;
   eeprom_cfg.blocksize = 256;
-  eeprom_cfg.size = 256;
-  eeprom_cfg.blocksize = 256;  */
 
   while (1) {
     lcdDisplay();
@@ -443,7 +443,7 @@ void eeprom_write(void) {
   lcdPrintln("per byte");
   lcdPrint(IntToStr(sum_ms / eeprom_cfg.size, 5, 0));
   lcdPrintln("ms");
-  lcdRefresh(); 
+  lcdRefresh();
 
   status = STAT_IDLE;
   gpioSetValue(WRITE_LED, 0);
